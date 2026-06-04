@@ -5,5 +5,11 @@
     <key name="weather-after-clock" type="b">
       <default>false</default>
     </key>
+    <key name="temperature-unit" type="i">
+      <range min="0" max="3"/>
+      <default>0</default>
+      <summary>Temperature unit</summary>
+      <description>0=System Default, 1=Celsius, 2=Fahrenheit, 3=Kelvin</description>
+    </key>
   </schema>
 </schemalist>

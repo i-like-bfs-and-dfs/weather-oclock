@@ -17,6 +17,13 @@ import * as Main from "resource:///org/gnome/shell/ui/main.js";
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import { Spinner } from 'resource:///org/gnome/shell/ui/animation.js';
 
+const TEMP_UNIT_MAP = [
+  GWeather.TemperatureUnit.DEFAULT,
+  GWeather.TemperatureUnit.CENTIGRADE,
+  GWeather.TemperatureUnit.FAHRENHEIT,
+  GWeather.TemperatureUnit.KELVIN,
+];
+
 const STATES = Object.freeze({
   LOADING: 'LOADING',
   SHOWING: 'SHOWING',
@@ -35,6 +42,7 @@ export default class WeatherOClock extends Extension {
     this._originalClockDisplay = null;
     this._panelWeather = null;
     this._positionChangeListener = null;
+    this._unitChangeListener = null;
     this._settings = null;
   }
 
@@ -42,7 +50,10 @@ export default class WeatherOClock extends Extension {
     const dateMenu = Main.panel.statusArea.dateMenu;
     const weather = dateMenu._weatherItem._weatherClient;
     this._originalClockDisplay = dateMenu._clockDisplay;
-    this._panelWeather = new WeatherOClockPanelWeather(weather, this._originalClockDisplay);
+
+    this._settings = this.getSettings();
+    const initialUnit = TEMP_UNIT_MAP[this._settings.get_int("temperature-unit")] ?? GWeather.TemperatureUnit.DEFAULT;
+    this._panelWeather = new WeatherOClockPanelWeather(weather, this._originalClockDisplay, initialUnit);
 
     this._topBox = new St.BoxLayout({ style_class: "clock" });
 
@@ -51,10 +62,16 @@ export default class WeatherOClock extends Extension {
       .get_parent()
       .replace_child(this._originalClockDisplay, this._topBox);
 
-    this._settings = this.getSettings();
     this._positionChangeListener = this._settings.connect(
       "changed::weather-after-clock",
       () => this._addWidget(),
+    );
+    this._unitChangeListener = this._settings.connect(
+      "changed::temperature-unit",
+      () => {
+        const unit = TEMP_UNIT_MAP[this._settings.get_int("temperature-unit")] ?? GWeather.TemperatureUnit.DEFAULT;
+        this._panelWeather.setTemperatureUnit(unit);
+      },
     );
     this._addWidget();
   }
@@ -63,6 +80,10 @@ export default class WeatherOClock extends Extension {
     if (this._positionChangeListener) {
       this._settings.disconnect(this._positionChangeListener);
       this._positionChangeListener = null;
+    }
+    if (this._unitChangeListener) {
+      this._settings.disconnect(this._unitChangeListener);
+      this._unitChangeListener = null;
     }
     this._settings = null;
 
@@ -114,7 +135,7 @@ const WeatherOClockPanelWeather = GObject.registerClass(
     GTypeName: "WeatherOClockPanelWeather",
   },
   class WeatherOClockPanelWeather extends St.BoxLayout {
-    _init(weather, clockDisplay) {
+    _init(weather, clockDisplay, temperatureUnit = GWeather.TemperatureUnit.DEFAULT) {
       super._init({
         visible: false,
         y_align: Clutter.ActorAlign.CENTER,
@@ -122,6 +143,7 @@ const WeatherOClockPanelWeather = GObject.registerClass(
 
       this._weather = weather;
       this._clockDisplay = clockDisplay;
+      this._temperatureUnit = temperatureUnit;
       this._signals = [];
       this._weatherUpdateTimeout = null;
       this._retryTimeout = null;
@@ -393,7 +415,7 @@ const WeatherOClockPanelWeather = GObject.registerClass(
 
       const iconName = weather.info.get_icon_name();
       const [tempOk] = weather.info.get_value_temp(GWeather.TemperatureUnit.DEFAULT);
-      const temp = tempOk ? weather.info.get_temp_summary() : "";
+      const temp = tempOk ? this._formatTemp() : "";
 
       if (iconName && iconName !== "weather-missing" && temp) {
         this._cancelRetry();
@@ -432,6 +454,26 @@ const WeatherOClockPanelWeather = GObject.registerClass(
       } else {
         this._setState(STATES.STALE);
       }
+    }
+
+    setTemperatureUnit(unit) {
+      this._temperatureUnit = unit;
+      if (this._state === STATES.SHOWING && this._weather)
+        this._onWeatherInfoUpdate(this._weather);
+    }
+
+    _formatTemp() {
+      const unit = this._temperatureUnit;
+      if (unit === GWeather.TemperatureUnit.DEFAULT)
+        return this._weather.info.get_temp_summary();
+
+      const [ok, val] = this._weather.info.get_value_temp(unit);
+      if (!ok) return "";
+      const rounded = Math.round(val);
+      if (unit === GWeather.TemperatureUnit.CENTIGRADE)  return `${rounded}°C`;
+      if (unit === GWeather.TemperatureUnit.FAHRENHEIT)  return `${rounded}°F`;
+      if (unit === GWeather.TemperatureUnit.KELVIN)      return `${rounded} K`;
+      return `${rounded}°`;
     }
 
     _scheduleRetry() {
